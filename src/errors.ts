@@ -10,13 +10,7 @@
  * retries. What is left is for your app to decide.
  */
 
-import {
-  KASH_ERROR_CODE,
-  KashConflictError,
-  KashError,
-  KashRateLimitError,
-  KashServerError,
-} from '@kashdao/sdk';
+import { KASH_ERROR_CODE, KashError } from '@kashdao/sdk';
 
 import { ConfigError } from './config.js';
 
@@ -25,7 +19,8 @@ import { ConfigError } from './config.js';
  * for codes this sample does not explain.
  */
 export function partnerAdvice(err: KashError): string | undefined {
-  const retryAfter = retryAfterSeconds(err);
+  // Every KashError carries the server's Retry-After, when it sent one.
+  const retryAfter = err.retryAfterSeconds;
   switch (err.code) {
     case KASH_ERROR_CODE.WITHDRAWALS_HELD:
       return (
@@ -56,8 +51,10 @@ export function partnerAdvice(err: KashError): string | undefined {
       );
     case KASH_ERROR_CODE.IDEMPOTENCY_REQUEST_IN_PROGRESS:
       return (
-        'An earlier request with this Idempotency-Key is still running. Nothing was refused: ' +
-        'retry with the SAME key to receive its answer. A new key could act twice.'
+        'An earlier request with this Idempotency-Key is still running, and the SDK has ' +
+        'already retried it with the same key. Read the resource first (for a withdrawal, ' +
+        "list the account's withdrawals); if it is not there, retry with the SAME key. " +
+        'A new key could act twice.'
       );
     case KASH_ERROR_CODE.IDEMPOTENCY_KEY_CONFLICT:
       return (
@@ -66,6 +63,11 @@ export function partnerAdvice(err: KashError): string | undefined {
       );
     case KASH_ERROR_CODE.WITHDRAWAL_BELOW_MINIMUM:
       return 'The amount is below the minimum for this network or its fee; the message names the figure.';
+    case KASH_ERROR_CODE.CLIENT_REQUEST_ID_CONFLICT:
+      return (
+        'This clientRequestId was already used for a different trade on this account. ' +
+        'Reuse an id only to retry the same order.'
+      );
     case KASH_ERROR_CODE.ACCOUNT_NOT_FOUND:
       return 'No account with this id: it is unknown, belongs to another partner, or was released.';
     case KASH_ERROR_CODE.PARTNER_KEY_REQUIRES_IP_ALLOWLIST:
@@ -86,25 +88,21 @@ export function describeError(err: unknown): string {
     ];
     const advice = partnerAdvice(err);
     if (advice !== undefined) lines.push(`  What to do: ${advice}`);
-    if (err.requestId !== undefined)
+    if (err.clientRequestId !== undefined) {
+      // Set on errors from trades.create: pass it back as `clientRequestId`
+      // to retry this same trade without risking a second one.
+      lines.push(
+        `  Trade clientRequestId (reuse it to retry the same trade): ${err.clientRequestId}`
+      );
+    }
+    if (err.requestId !== undefined) {
       lines.push(`  Request id (quote it to Kash support): ${err.requestId}`);
+    }
     return lines.join('\n');
   }
   if (err instanceof ConfigError) return `Configuration: ${err.message}`;
   if (err instanceof Error) return `${err.name}: ${err.message}`;
   return `Unexpected error: ${String(err)}`;
-}
-
-/** The server's Retry-After, on the error classes that carry one. */
-function retryAfterSeconds(err: KashError): number | undefined {
-  if (
-    err instanceof KashConflictError ||
-    err instanceof KashRateLimitError ||
-    err instanceof KashServerError
-  ) {
-    return err.retryAfterSeconds;
-  }
-  return undefined;
 }
 
 function formatSeconds(seconds: number | undefined): string {

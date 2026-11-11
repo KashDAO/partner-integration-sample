@@ -10,7 +10,7 @@
 
 import type { KashClient, WebhookEvent } from '@kashdao/sdk';
 
-import { formatUsdc } from '../format.js';
+import { formatAtomicUsdc } from '../format.js';
 
 export function createReconciler(kash: KashClient): (event: WebhookEvent) => Promise<void> {
   return async (event) => {
@@ -86,7 +86,7 @@ export function createReconciler(kash: KashClient): (event: WebhookEvent) => Pro
         );
         const reason = event.type === 'withdrawal.failed' ? ` (${event.data.errorCode})` : '';
         log(
-          `withdrawal ${withdrawal.withdrawalId} of ${formatUsdc(withdrawal.amountAtomic)} is now ${withdrawal.status}${reason}`
+          `withdrawal ${withdrawal.withdrawalId} of ${formatAtomicUsdc(withdrawal.amountAtomic)} is now ${withdrawal.status}${reason}`
         );
         return;
       }
@@ -95,8 +95,8 @@ export function createReconciler(kash: KashClient): (event: WebhookEvent) => Pro
       case 'payout.completed': {
         const balance = await kash.balance.get({ account: event.data.accountId });
         log(
-          `${formatUsdc(event.data.amountAtomic)} paid out for market ${event.data.marketId}; ` +
-            `${formatUsdc(balance.availableAtomic)} now available`
+          `${formatAtomicUsdc(event.data.amountAtomic)} paid out for market ${event.data.marketId}; ` +
+            `${formatAtomicUsdc(balance.availableAtomic)} now available`
         );
         return;
       }

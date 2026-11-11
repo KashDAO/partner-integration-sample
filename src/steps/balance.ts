@@ -11,7 +11,7 @@ import type { BalanceResource, KashClient } from '@kashdao/sdk';
 
 import { getKashClient } from '../client.js';
 import { isMain, parseFlags, requireFlag, runMain } from '../cli.js';
-import { formatUsdc } from '../format.js';
+import { formatAtomicUsdc } from '../format.js';
 
 export async function getBalance(kash: KashClient, accountId: string): Promise<BalanceResource> {
   // A balance Kash cannot read is an error (DEPENDENCY_UNAVAILABLE), never a zero.
@@ -19,9 +19,9 @@ export async function getBalance(kash: KashClient, accountId: string): Promise<B
 }
 
 export function printBalance(balance: BalanceResource): void {
-  console.log(`  on chain:               ${formatUsdc(balance.usdcAtomic)}`);
-  console.log(`  held by withdrawals:    ${formatUsdc(balance.pendingWithdrawalsAtomic)}`);
-  console.log(`  available to spend:     ${formatUsdc(balance.availableAtomic)}`);
+  console.log(`  on chain:               ${formatAtomicUsdc(balance.usdcAtomic)}`);
+  console.log(`  held by withdrawals:    ${formatAtomicUsdc(balance.pendingWithdrawalsAtomic)}`);
+  console.log(`  available to spend:     ${formatAtomicUsdc(balance.availableAtomic)}`);
   console.log(`  read from the chain at: ${balance.observedAt}`);
 }
 

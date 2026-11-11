@@ -72,17 +72,18 @@ export function onboardingKey(externalId: string, acceptedAt: string): string {
   return `onboard-${digest.slice(0, 32)}`;
 }
 
-export function printCreateResult(account: PartnerAccountCreateResult): void {
+export function printCreateResult(result: PartnerAccountCreateResult): void {
   console.log(
-    account.outcome === 'created'
+    result.outcome === 'created'
       ? 'Created a new account. It is provisioning; account.active follows when it is ready.'
       : 'You already have an account for this externalId; nothing was created.'
   );
-  if (account.idempotentReplay) {
+  if (result.idempotentReplay) {
+    // The account is as it was at that first request: read it for its status now.
     console.log('(Kash returned its stored answer to an earlier request with the same key.)');
   }
-  console.log(`  outcome:        ${account.outcome}`);
-  printAccount(account);
+  console.log(`  outcome:        ${result.outcome}`);
+  printAccount(result.account);
 }
 
 async function main(): Promise<void> {

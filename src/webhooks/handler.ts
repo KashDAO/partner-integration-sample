@@ -14,8 +14,12 @@
  *   than the order of arrival.
  */
 
-import { KashValidationError, KashWebhookSignatureError } from '@kashdao/sdk';
-import type { KashClient, WebhookEvent } from '@kashdao/sdk';
+import {
+  KashValidationError,
+  KashWebhookSignatureError,
+  isUnknownWebhookEvent,
+} from '@kashdao/sdk';
+import type { ConstructedWebhookEvent, KashClient, WebhookEvent } from '@kashdao/sdk';
 
 import { ConfigError } from '../config.js';
 
@@ -36,7 +40,10 @@ export type WebhookHandlerOptions = {
   readonly kash: Pick<KashClient, 'webhooks'>;
   /** The endpoint's signing secret (`whsec_...`). */
   readonly secret: string;
-  /** Your handling of one verified, new event. Throw to have Kash retry it. */
+  /**
+   * Your handling of one verified, new event of a type this SDK version knows.
+   * Throw to have Kash retry it. Unknown types are logged and acknowledged.
+   */
   readonly onEvent: (event: WebhookEvent) => Promise<void>;
   readonly processed?: ProcessedEventStore;
   readonly log?: (message: string) => void;
@@ -65,10 +72,11 @@ export function createWebhookHandler(
       return reply(400, false, 'Missing X-Kash-Signature header.');
     }
 
-    let event: WebhookEvent;
+    let event: ConstructedWebhookEvent;
     try {
       // Checks the HMAC and the timestamp (five minutes' tolerance), then
-      // parses the body into a typed event.
+      // parses the body: a typed event, or an `UnknownWebhookEvent` for a type
+      // newer than this SDK version.
       event = await options.kash.webhooks.constructEvent(rawBody, signature, options.secret);
     } catch (err) {
       if (err instanceof KashWebhookSignatureError) {
@@ -79,15 +87,12 @@ export function createWebhookHandler(
         return reply(400, false, 'Invalid signature.');
       }
       if (err instanceof KashValidationError) {
-        // The signature is valid, so this came from Kash, but this SDK
-        // version does not know the event's shape (a newer event type).
-        // Acknowledge it so Kash does not keep retrying, and record the id:
-        // after upgrading the SDK you can ask Kash to send it again with
+        // Signed by Kash, but a known event type whose body does not match
+        // its schema. Retrying will not change it, so answer 422 (final) and
+        // keep the id: once fixed, ask Kash to resend it with
         // kash.webhooks.redeliver(eventId).
-        log(
-          `acknowledged an event this SDK cannot parse (id ${eventIdHeader ?? 'unknown'}): ${err.message}`
-        );
-        return reply(200, true, 'Unrecognised event acknowledged.');
+        log(`refused a malformed event (id ${eventIdHeader ?? 'unknown'}): ${err.message}`);
+        return reply(422, false, 'Malformed event.');
       }
       throw err;
     }
@@ -95,6 +100,14 @@ export function createWebhookHandler(
     if (processed.has(event.id)) {
       log(`duplicate ${event.type} ${event.id}: already handled`);
       return reply(200, true, 'Duplicate.');
+    }
+
+    if (isUnknownWebhookEvent(event)) {
+      // A type added after this SDK version. Acknowledge it so Kash stops
+      // retrying, and log the id: after upgrading the SDK you can have it
+      // resent with kash.webhooks.redeliver(eventId).
+      log(`acknowledged unknown event type ${event.type} ${event.id}`);
+      return reply(200, true, 'Unknown event type acknowledged.');
     }
 
     // Claim the id before handling it, so a concurrent redelivery of the same

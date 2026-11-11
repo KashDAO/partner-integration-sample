@@ -20,17 +20,21 @@ export class StepStoppedError extends Error {
 }
 
 /**
- * Parses `--name value` flags. Every flag is a string; the step validates
+ * Parses `--name value` flags and bare `--switch` flags. The step validates
  * the values it needs.
  */
-export function parseFlags<const TName extends string>(
+export function parseFlags<const TName extends string, const TSwitch extends string = never>(
   names: readonly TName[],
+  switches: readonly TSwitch[] = [],
   argv: readonly string[] = process.argv.slice(2)
-): Partial<Record<TName, string>> {
-  const options = Object.fromEntries(names.map((name) => [name, { type: 'string' as const }]));
+): Partial<Record<TName, string> & Record<TSwitch, boolean>> {
+  const options = Object.fromEntries([
+    ...names.map((name) => [name, { type: 'string' as const }]),
+    ...switches.map((name) => [name, { type: 'boolean' as const }]),
+  ]);
   try {
     const { values } = parseArgs({ args: [...argv], options, strict: true });
-    return values as Partial<Record<TName, string>>;
+    return values as Partial<Record<TName, string> & Record<TSwitch, boolean>>;
   } catch (err) {
     throw new UsageError(err instanceof Error ? err.message : String(err));
   }
@@ -60,6 +64,18 @@ export function parseIndex(value: string | undefined, flag: string): number {
   const raw = requireFlag(value, flag);
   if (!/^\d+$/.test(raw)) throw new UsageError(`--${flag} must be a whole number, such as 0.`);
   return Number(raw);
+}
+
+/**
+ * An `onStatus` callback for the SDK's wait helpers that prints each status
+ * once, when it changes.
+ */
+export function logStatusChanges<T extends { readonly status: string }>(): (value: T) => void {
+  let last: string | undefined;
+  return (value) => {
+    if (value.status !== last) console.log(`  status: ${value.status}`);
+    last = value.status;
+  };
 }
 
 /**

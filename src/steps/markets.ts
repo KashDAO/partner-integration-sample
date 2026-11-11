@@ -4,6 +4,8 @@
  *   npm run markets
  *   npm run markets -- --limit 20 --category crypto
  *
+ * Shows only markets worth offering a user: tradeable now, not closing
+ * within the hour, and not one of staging's automated test fixtures.
  * Markets and quotes act for no account, so these calls take no `account`.
  */
 
@@ -12,6 +14,13 @@ import type { KashClient, MarketResource } from '@kashdao/sdk';
 import { getKashClient } from '../client.js';
 import { UsageError, isMain, parseFlags, runMain } from '../cli.js';
 
+/** A market closing sooner than this is not offered: a new position would barely run. */
+const MIN_TIME_LEFT_MS = 60 * 60 * 1000;
+
+/** Staging runs automated end-to-end markets whose titles start with this. */
+const STAGING_FIXTURE_PREFIX = 'zz-fixture';
+
+/** Up to `limit` markets worth offering, walking pages as filtering needs. */
 export async function listOpenMarkets(
   kash: KashClient,
   options: { readonly limit: number; readonly category?: string }
@@ -19,10 +28,26 @@ export async function listOpenMarkets(
   const page = await kash.markets.list({
     status: 'ACTIVE',
     chain: 'solana',
-    limit: options.limit,
+    limit: 100,
     ...(options.category === undefined ? {} : { category: options.category }),
   });
-  return page.data;
+  const now = Date.now();
+  const offerable: MarketResource[] = [];
+  for await (const market of page) {
+    if (isOfferable(market, now)) offerable.push(market);
+    if (offerable.length >= options.limit) break;
+  }
+  return offerable;
+}
+
+/** Tradeable now, not a staging fixture, and not closing within the hour. */
+export function isOfferable(market: MarketResource, now: number): boolean {
+  if (!isTradeable(market)) return false;
+  if (market.title?.startsWith(STAGING_FIXTURE_PREFIX) === true) return false;
+  const closesAt = market.freezeAt ?? market.expiresAt;
+  return (
+    closesAt === null || closesAt === undefined || Date.parse(closesAt) - now > MIN_TIME_LEFT_MS
+  );
 }
 
 /**

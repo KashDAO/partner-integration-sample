@@ -20,14 +20,21 @@ import { randomUUID } from 'node:crypto';
 import type { KashClient } from '@kashdao/sdk';
 
 import { getKashClient } from '../client.js';
-import { StepStoppedError, isMain, parseFlags, parseIndex, requireFlag, runMain } from '../cli.js';
+import {
+  StepStoppedError,
+  isMain,
+  logStatusChanges,
+  parseFlags,
+  parseIndex,
+  requireFlag,
+  runMain,
+} from '../cli.js';
 import { isTestKey, requireEnv } from '../config.js';
-import { ONE_USDC_ATOMIC, formatUsdc } from '../format.js';
+import { ONE_USDC_ATOMIC, formatAtomicUsdc } from '../format.js';
 
-import { waitForActive } from './account.js';
 import { getBalance, printBalance } from './balance.js';
 import { DEFAULT_TERMS_VERSION, createAccount, printCreateResult } from './create-account.js';
-import { isTradeable, listOpenMarkets } from './markets.js';
+import { listOpenMarkets } from './markets.js';
 import { placeTrade, printTradeResult } from './trade.js';
 import { printWithdrawalResult, withdraw } from './withdraw.js';
 
@@ -55,9 +62,13 @@ async function main(): Promise<void> {
   printCreateResult(created);
 
   console.log('\n2. Wait for it to become active');
-  const account = await waitForActive(kash, created.accountId);
-  if (account.status !== 'active' || account.depositAddress === null) {
-    throw new StepStoppedError(`The account ended in ${account.status}, not active.`);
+  // Rejects with ACCOUNT_NOT_ACTIVE if the account failed to provision, was
+  // suspended or released: none of those becomes active by waiting.
+  const account = await kash.partnerAccounts.waitUntilActive(created.account.accountId, {
+    onStatus: logStatusChanges(),
+  });
+  if (account.depositAddress === null) {
+    throw new StepStoppedError('The account is active but reports no deposit address.');
   }
 
   console.log('\n3. Read its balance');
@@ -77,7 +88,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log(`\n4. Buy ${formatUsdc(SMALL_AMOUNT_ATOMIC)} of an outcome`);
+  console.log(`\n4. Buy ${formatAtomicUsdc(SMALL_AMOUNT_ATOMIC)} of an outcome`);
   const marketId = flags.market ?? (await firstTradeableMarket(kash));
   const trade = await placeTrade(kash, {
     accountId: account.accountId,
@@ -88,10 +99,12 @@ async function main(): Promise<void> {
   });
   printTradeResult(trade);
 
-  console.log(`\n5. Withdraw ${formatUsdc(SMALL_AMOUNT_ATOMIC)} to the user's Solana address`);
+  console.log(
+    `\n5. Withdraw ${formatAtomicUsdc(SMALL_AMOUNT_ATOMIC)} to the user's Solana address`
+  );
   const after = await getBalance(kash, account.accountId);
   if (BigInt(after.availableAtomic) < ONE_USDC_ATOMIC) {
-    console.log(`  Skipped: only ${formatUsdc(after.availableAtomic)} is left to withdraw.`);
+    console.log(`  Skipped: only ${formatAtomicUsdc(after.availableAtomic)} is left to withdraw.`);
     return;
   }
   const withdrawal = await withdraw(kash, {
@@ -103,9 +116,8 @@ async function main(): Promise<void> {
 }
 
 async function firstTradeableMarket(kash: KashClient): Promise<string> {
-  const markets = await listOpenMarkets(kash, { limit: 50 });
-  const market = markets.find(isTradeable);
-  if (market === undefined) throw new StepStoppedError('No tradeable market is open right now.');
+  const [market] = await listOpenMarkets(kash, { limit: 1 });
+  if (market === undefined) throw new StepStoppedError('No market is open for trading right now.');
   console.log(`  using market ${market.id}: ${market.title ?? '(untitled)'}`);
   return market.id;
 }

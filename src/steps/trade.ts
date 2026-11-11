@@ -6,7 +6,10 @@
  *
  * Optional: --order-id <your own order reference> (default: a new UUID).
  * Re-running with the same --order-id returns the same trade instead of
- * placing a second one.
+ * placing a second one, however long afterwards.
+ *
+ * `--amount` is in ATOMIC units, like every amount in this sample; the trade
+ * itself is sent as a DECIMAL string, which is the one place the API wants it.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -18,13 +21,14 @@ import { getKashClient } from '../client.js';
 import {
   StepStoppedError,
   isMain,
+  logStatusChanges,
   parseAtomicAmount,
   parseFlags,
   parseIndex,
   requireFlag,
   runMain,
 } from '../cli.js';
-import { atomicToDecimal, formatUsdc } from '../format.js';
+import { atomicToTradeAmount, formatAtomicUsdc } from '../format.js';
 
 import { isTradeable } from './markets.js';
 
@@ -34,7 +38,7 @@ export type PlaceTradeInput = {
   readonly outcomeIndex: number;
   /** USDC to spend, in atomic units. */
   readonly amountAtomic: string;
-  /** Your own reference for this order; it doubles as the idempotency key. */
+  /** Your own reference for this order; it doubles as the trade's `clientRequestId`. */
   readonly orderId: string;
 };
 
@@ -64,10 +68,12 @@ export async function placeTrade(kash: KashClient, input: PlaceTradeInput): Prom
     amountUsdcAtomic: BigInt(amountAtomic),
   });
   console.log(
-    `Quote: ${formatUsdc(amountAtomic)} on "${outcome.label}" (${market.title ?? marketId})`
+    `Quote: ${formatAtomicUsdc(amountAtomic)} on "${outcome.label}" (${market.title ?? marketId})`
   );
   console.log(`  tokens out:          ${formatTokens(quote.tokensOut)}`);
-  console.log(`  effective price:     ${quote.effectivePrice}`);
+  console.log(
+    `  average price:       ${formatAtomicUsdc(pricePerTokenAtomic(amountAtomic, quote.tokensOut))} a token`
+  );
   if (quote.impliedProbability !== null) {
     console.log(`  probability after:   ${(quote.impliedProbability * 100).toFixed(1)}%`);
   }
@@ -77,23 +83,28 @@ export async function placeTrade(kash: KashClient, input: PlaceTradeInput): Prom
   const balance = await kash.balance.get({ account: accountId });
   if (BigInt(balance.availableAtomic) < BigInt(amountAtomic)) {
     throw new StepStoppedError(
-      `The account has ${formatUsdc(balance.availableAtomic)} available, less than ${formatUsdc(amountAtomic)}.`
+      `The account has ${formatAtomicUsdc(balance.availableAtomic)} available, less than ${formatAtomicUsdc(amountAtomic)}.`
     );
   }
 
-  // 4. Place it for the account. `amount` is a USDC decimal string here, not
-  //    atomic units. Metadata comes back on every trade webhook, which is how
-  //    you match a trade webhook to your own order and user: trade webhooks
-  //    do not carry the account id.
+  // 4. Place it for the account.
+  //    - `amount` is a DECIMAL USDC string here, not atomic units.
+  //    - `clientRequestId` makes the order idempotent with no time limit:
+  //      Kash keeps one trade per account and id, so a retry of this order
+  //      returns the trade already recorded. Without one the SDK generates an
+  //      id per call, which protects only that call's own retries.
+  //    - `metadata` comes back on every trade webhook. Trade webhooks do not
+  //      carry the account id, so this is how you match one to your order.
   const trade = await kash.trades.create(
     {
       marketId,
       outcomeIndex,
-      amount: atomicToDecimal(amountAtomic),
+      amount: atomicToTradeAmount(amountAtomic),
       side: 'buy',
+      clientRequestId: `order-${orderId}`,
       metadata: { exampleWalletOrderId: orderId, kashAccountId: accountId },
     },
-    { account: accountId, idempotencyKey: `trade-${orderId}` }
+    { account: accountId }
   );
   console.log(
     `Trade ${trade.id}: ${trade.status}${trade.idempotent ? ' (an earlier request with this order id)' : ''}`
@@ -114,7 +125,7 @@ export async function placeTrade(kash: KashClient, input: PlaceTradeInput): Prom
   return kash.trades.waitForCompletion(trade.id, {
     account: accountId,
     timeoutMs: 120_000,
-    onStatus: (t) => console.log(`  status: ${t.status}`),
+    onStatus: logStatusChanges(),
   });
 }
 
@@ -130,6 +141,12 @@ export function printTradeResult(trade: TradeResource): void {
   } else {
     console.log(`Trade is ${trade.status}.`);
   }
+}
+
+/** USDC paid per whole outcome token, in atomic units. Tokens are 18-decimal (WAD). */
+function pricePerTokenAtomic(amountAtomic: string, tokensOutWad: string): bigint {
+  const tokens = BigInt(tokensOutWad);
+  return tokens === 0n ? 0n : (BigInt(amountAtomic) * 10n ** 18n) / tokens;
 }
 
 /** Outcome tokens are 18-decimal fixed point (WAD); shown to 4 places. */
