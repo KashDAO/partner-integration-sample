@@ -34,13 +34,17 @@ A few rules shape every call:
   redemptions, traces) pass that user's `accountId` as `account`; the SDK sends it as
   the `Kash-Account` header. The `partnerAccounts` methods name the account in the URL
   instead, and markets and quotes act for no account.
-- **Idempotency.** Every write in this sample sends an `Idempotency-Key`, so retrying
-  after a timeout returns the first answer rather than acting twice. Withdrawals
-  require one. Reuse a key only for a retry of the same request with the same body.
-- **Money is never a float.** Amounts are integer strings in USDC atomic units (6
-  decimals): `"2500000"` is 2.5 USDC. The one exception is `trades.create`, whose
-  `amount` is a USDC decimal string (`"2.5"`); [`src/format.ts`](src/format.ts)
-  converts between them.
+- **Idempotency.** Account and withdrawal creates send an `Idempotency-Key`, so
+  retrying after a timeout returns the first answer rather than acting twice;
+  withdrawals require one. Trades send your order reference as `clientRequestId`,
+  which Kash keeps per account with no time limit, so retrying an order can never
+  place it twice. Reuse a key or id only to retry the same request with the same body.
+- **Two units for money, never a float.** Balances, quotes, withdrawals, fees and
+  webhooks use integer strings in USDC atomic units (6 decimals): `"2500000"` is
+  2.5 USDC. `trades.create` alone takes a decimal USDC string (`"2.5"`). Every flag in
+  this sample takes atomic units, and
+  [`src/format.ts`](src/format.ts) converts with `atomicToTradeAmount` at the one call
+  that needs it.
 - **Webhooks are prompts, not facts.** Deliveries can repeat and arrive out of order.
   Process each event id once and re-read the current state from the API.
 
@@ -110,6 +114,9 @@ npm run find -- --external-id user-8841
 ```
 
 Both show the status and, once the account is `active`, its Solana `depositAddress`.
+To wait for a new account, the walkthrough uses the SDK's
+`partnerAccounts.waitUntilActive`; in production, the `account.active` webhook tells
+you without polling.
 
 ### 3. Read the balance
 
@@ -127,24 +134,38 @@ npm run markets
 npm run trade -- --account <accountId> --market <marketId> --outcome 0 --amount 1000000
 ```
 
-`trade` checks the market takes trades, quotes the buy, checks the balance, places it
-for the account and waits for a final status with the SDK's `waitForCompletion`. The
-trade carries your own order reference in `metadata`, which every trade webhook
-echoes back: trade webhooks do not carry the account id, so this is how you match
-them to your user. Pass `--order-id` to retry the same order safely. See
-[`src/steps/trade.ts`](src/steps/trade.ts).
+`markets` lists markets worth offering a user: tradeable now, not closing within the
+next hour, and not one of staging's automated test markets (titles starting
+`zz-fixture`).
+
+`trade` checks the market takes trades, quotes the buy (tokens out and the average
+price per token), checks the balance, places it for the account and waits for a final
+status with the SDK's `trades.waitForCompletion`. The trade carries your order
+reference twice: as `clientRequestId`, so `--order-id` retries the same order safely,
+and in `metadata`, which every trade webhook echoes back. Trade webhooks do not carry
+the account id, so metadata is how you match them to your user. If `trades.create`
+fails, the error shows the `clientRequestId` it sent, for retrying that same trade.
+See [`src/steps/trade.ts`](src/steps/trade.ts).
 
 ### 5. Withdraw
 
 ```sh
 npm run withdraw -- --account <accountId> --amount 1000000
+npm run withdraw -- --account <accountId> --amount 1000000 --quote-only
 ```
 
-Quotes the withdrawal (what arrives, and the most the account can withdraw now),
-creates it with an idempotency key, then polls until it is `completed`, `failed` or
-`cancelled`. A retry with the same `--request-id` returns the same withdrawal; if the
-first attempt is still running, Kash answers `IDEMPOTENCY_REQUEST_IN_PROGRESS` and the
-sample retries with the same key. Withdrawals are held for 24 hours after a
+Quotes the withdrawal and shows what the user should see before confirming: what
+arrives, the network fee, the total that leaves the balance, and the most the account
+can withdraw now. The fee figures are optional in the API: when Kash does not
+disclose them the sample says "not disclosed", never zero. It then creates the
+withdrawal with an idempotency key and waits with the SDK's
+`partnerAccounts.withdrawals.waitForCompletion` until it is `completed`, `failed` or
+`cancelled`, and shows the fee actually charged.
+
+A retry with the same `--request-id` returns the same withdrawal. If the first
+attempt is still running, the SDK retries with the same key by itself; if
+`IDEMPOTENCY_REQUEST_IN_PROGRESS` still reaches you, list the account's withdrawals
+before retrying with that same key. Withdrawals are held for 24 hours after a
 destination change. See [`src/steps/withdraw.ts`](src/steps/withdraw.ts).
 
 ### 6. Receive webhooks
@@ -159,9 +180,13 @@ Starts an HTTP server on `PORT` that accepts `POST /webhooks`. For each delivery
    `webhooks.constructEvent` (an HMAC-SHA256 under your secret, at most five minutes
    old), answering `400` if it fails;
 2. skips an event id it has already handled, answering `200`;
-3. handles every event type: `trade.*`, `account.*`, `withdrawal.*` and
+3. acknowledges with `200` an event type newer than your SDK version
+   (`isUnknownWebhookEvent`), logging its id so you can have it resent with
+   `webhooks.redeliver` after upgrading;
+4. handles every known type: `trade.*`, `account.*`, `withdrawal.*` and
    `payout.completed`, re-reading the current state from the API;
-4. answers `200`, or `500` if handling failed so that Kash retries.
+5. answers `200`, or `500` if handling failed so that Kash retries. A known type
+   whose body does not match its schema gets `422`, which Kash does not retry.
 
 Kash must reach the server over HTTPS. While testing, expose it with any HTTPS tunnel,
 for example:
@@ -201,17 +226,17 @@ Every SDK error is a `KashError` subclass with a stable `code`. Compare it with
 The SDK already retries rate limits, server errors and network failures with backoff.
 [`src/errors.ts`](src/errors.ts) shows the handling for each:
 
-| Code                              | Meaning                                                                        |
-| --------------------------------- | ------------------------------------------------------------------------------ |
-| `ACCOUNT_NOT_ACTIVE`              | The account is provisioning, suspended or failed; the message says which.      |
-| `ACCOUNT_NOT_FOUND`               | Unknown, another partner's, or released.                                       |
-| `INSUFFICIENT_BALANCE`            | More than the account can spend.                                               |
-| `WITHDRAWALS_HELD`                | 24-hour hold after a destination change; `retryAfterSeconds` is the time left. |
-| `WITHDRAWAL_BELOW_MINIMUM`        | Below the network's minimum or its fee.                                        |
-| `DESTINATION_NOT_SUPPORTED`       | Kash cannot withdraw to that network here.                                     |
-| `IDEMPOTENCY_REQUEST_IN_PROGRESS` | An earlier request with this key is still running: retry with the same key.    |
-| `IDEMPOTENCY_KEY_CONFLICT`        | The key was used with a different request.                                     |
-| `RATE_LIMIT_EXCEEDED`             | A rate limit ran out; `retryAfterSeconds` says when to try again.              |
+| Code                              | Meaning                                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------------------- |
+| `ACCOUNT_NOT_ACTIVE`              | The account is provisioning, suspended or failed; the message says which.                    |
+| `ACCOUNT_NOT_FOUND`               | Unknown, another partner's, or released.                                                     |
+| `INSUFFICIENT_BALANCE`            | More than the account can spend.                                                             |
+| `WITHDRAWALS_HELD`                | 24-hour hold after a destination change; `retryAfterSeconds` is the time left.               |
+| `WITHDRAWAL_BELOW_MINIMUM`        | Below the network's minimum or its fee.                                                      |
+| `DESTINATION_NOT_SUPPORTED`       | Kash cannot withdraw to that network here.                                                   |
+| `IDEMPOTENCY_REQUEST_IN_PROGRESS` | An earlier request with this key is still running: read state, then retry with the same key. |
+| `IDEMPOTENCY_KEY_CONFLICT`        | The key was used with a different request.                                                   |
+| `RATE_LIMIT_EXCEEDED`             | A rate limit ran out; `retryAfterSeconds` says when to try again.                            |
 
 Rate limits are checked together: 3,000 requests a minute per partner, 3,000 per key,
 and 60 a minute for each account on the calls made for it. Prefer webhooks to polling.
@@ -245,8 +270,7 @@ src/
   config.ts            environment settings
   cli.ts               flag parsing and error output for the steps
   errors.ts            branching on Kash error codes
-  format.ts            USDC amount helpers
-  poll.ts              polling for state without an SDK wait helper
+  format.ts            USDC amounts: atomic units, and the decimal trades.create takes
   steps/               one runnable file per step
   webhooks/handler.ts  verify, de-duplicate, choose the response status
   webhooks/reconcile.ts what to do for each event type
