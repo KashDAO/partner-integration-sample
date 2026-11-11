@@ -1,0 +1,32 @@
+{
+  "name": "kash-partner-sample",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A sample partner integration with the Kash public API, built on @kashdao/sdk.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.9.0"
+  },
+  "scripts": {
+    "create-account": "node --env-file-if-exists=.env --import tsx src/steps/create-account.ts",
+    "account": "node --env-file-if-exists=.env --import tsx src/steps/account.ts",
+    "find": "node --env-file-if-exists=.env --import tsx src/steps/find.ts",
+    "balance": "node --env-file-if-exists=.env --import tsx src/steps/balance.ts",
+    "markets": "node --env-file-if-exists=.env --import tsx src/steps/markets.ts",
+    "trade": "node --env-file-if-exists=.env --import tsx src/steps/trade.ts",
+    "withdraw": "node --env-file-if-exists=.env --import tsx src/steps/withdraw.ts",
+    "webhooks": "node --env-file-if-exists=.env --import tsx src/steps/webhooks.ts",
+    "walkthrough": "node --env-file-if-exists=.env --import tsx src/steps/walkthrough.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@kashdao/sdk": "^0.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
