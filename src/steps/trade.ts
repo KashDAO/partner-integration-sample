@@ -42,9 +42,20 @@ export type PlaceTradeInput = {
   readonly orderId: string;
 };
 
+/** Kash's minimum trade, 1 USDC in atomic units (partner guide, section 4). */
+export const MIN_TRADE_ATOMIC = 1_000_000n;
+
 export async function placeTrade(kash: KashClient, input: PlaceTradeInput): Promise<TradeResource> {
   const { accountId, marketId, outcomeIndex, amountAtomic, orderId } = input;
   console.log(`Order ${orderId} (pass --order-id ${orderId} to retry this same order safely)`);
+
+  // Kash rejects a trade under 1 USDC after accepting it (trade.rejected, "below the
+  // minimum of $1.00"), so refuse it here rather than wait for the webhook.
+  if (BigInt(amountAtomic) < MIN_TRADE_ATOMIC) {
+    throw new StepStoppedError(
+      `The smallest trade is ${formatAtomicUsdc(MIN_TRADE_ATOMIC.toString())}; ${formatAtomicUsdc(amountAtomic)} would be rejected.`
+    );
+  }
 
   // 1. Check the market takes trades and has this outcome.
   const market = await kash.markets.get(marketId);
