@@ -16,9 +16,9 @@ Each step is a short, readable script you can run on its own against Kash stagin
 
 The code favours clarity over abstraction: copy what you need into your own server.
 
-- Kash documentation: https://docs.kash.bot
-- API reference: https://docs.kash.bot (API reference section)
-- SDK: https://www.npmjs.com/package/@kashdao/sdk
+- Partner integration guide: https://docs.kash.bot/developer-docs/partner-integration/overview
+- Partner quickstart: https://docs.kash.bot/developer-docs/partner-integration/quickstart
+- TypeScript SDK: https://docs.kash.bot/developer-docs/rest-api/sdks/typescript (package: https://www.npmjs.com/package/@kashdao/sdk)
 
 ## How a partner integration works
 
