@@ -14,7 +14,8 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { KashClient, PartnerWithdrawalQuote, PartnerWithdrawalResource } from '@kashdao/sdk';
+import type { KashClient } from '@kashdao/sdk';
+import type { PartnerWithdrawalQuote, PartnerWithdrawalResource } from '@kashdao/sdk/partner';
 
 import { getKashClient } from '../client.js';
 import {

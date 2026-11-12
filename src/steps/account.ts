@@ -4,7 +4,7 @@
  *   npm run account -- --id <accountId>
  */
 
-import type { PartnerAccountResource } from '@kashdao/sdk';
+import type { PartnerAccountResource } from '@kashdao/sdk/partner';
 
 import { getKashClient } from '../client.js';
 import { isMain, parseFlags, requireFlag, runMain } from '../cli.js';

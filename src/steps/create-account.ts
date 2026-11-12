@@ -15,7 +15,8 @@
 
 import { createHash } from 'node:crypto';
 
-import type { KashClient, PartnerAccountCreateResult } from '@kashdao/sdk';
+import type { KashClient } from '@kashdao/sdk';
+import type { PartnerAccountCreateResult } from '@kashdao/sdk/partner';
 
 import { getKashClient } from '../client.js';
 import { UsageError, isMain, parseFlags, requireFlag, runMain } from '../cli.js';
