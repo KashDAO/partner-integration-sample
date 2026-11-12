@@ -92,7 +92,7 @@ Kash error code, what it means for you, and the request id to quote to Kash supp
 
 ```sh
 npm run create-account -- --external-id user-8841 \
-  --destination <the user's Solana address> --country GB
+  --destination <the user's Solana address> --country DE
 ```
 
 Call this when the user opts in. `--external-id` is your own id for the user;
@@ -207,7 +207,7 @@ handled event ids in your database rather than in memory.
 
 ```sh
 npm run walkthrough -- --external-id user-8841 \
-  --destination <the user's Solana address> --country GB
+  --destination <the user's Solana address> --country DE
 ```
 
 Creates the account, waits for it to become active and reads its balance. If the
