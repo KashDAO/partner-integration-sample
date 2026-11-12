@@ -66,14 +66,14 @@ describe('createWebhookHandler', () => {
     }
   });
 
-  it('rejects a tampered body with 400 and does not hand it on', async () => {
+  it('rejects a tampered body with 401, which Kash retries, and does not hand it on', async () => {
     const body = accountActiveBody();
     const signature = await sign(body);
     const tampered = body.replace('user-8841', 'user-0001');
 
     const result = await handle({ rawBody: tampered, signature });
 
-    assert.equal(result.status, 400);
+    assert.equal(result.status, 401);
     assert.equal(received.length, 0);
   });
 
@@ -84,7 +84,7 @@ describe('createWebhookHandler', () => {
       signature: await sign(body, 'whsec_someone_else'),
     });
 
-    assert.equal(result.status, 400);
+    assert.equal(result.status, 401);
     assert.equal(received.length, 0);
   });
 
@@ -96,14 +96,14 @@ describe('createWebhookHandler', () => {
       signature: await sign(body, SECRET, sixMinutesAgo),
     });
 
-    assert.equal(result.status, 400);
+    assert.equal(result.status, 401);
     assert.equal(received.length, 0);
   });
 
   it('rejects a delivery without a signature header', async () => {
     const result = await handle({ rawBody: accountActiveBody(), signature: undefined });
 
-    assert.equal(result.status, 400);
+    assert.equal(result.status, 401);
     assert.equal(received.length, 0);
   });
 
@@ -157,7 +157,7 @@ describe('createWebhookHandler', () => {
     assert.equal(received.length, 0);
   });
 
-  it('refuses a verified known event whose body does not match its schema with 422', async () => {
+  it('answers 500, which Kash retries, to a verified known event whose body does not match its schema', async () => {
     const body = JSON.stringify({
       id: randomUUID(),
       type: 'account.active',
@@ -167,7 +167,7 @@ describe('createWebhookHandler', () => {
     });
     const result = await handle({ rawBody: body, signature: await sign(body) });
 
-    assert.equal(result.status, 422);
+    assert.equal(result.status, 500);
     assert.equal(received.length, 0);
   });
 });

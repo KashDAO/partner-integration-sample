@@ -3,8 +3,10 @@
  * hand the event on, and choose the HTTP status Kash should see.
  *
  * Kash retries a delivery until your endpoint answers 2xx, or answers 400,
- * 404, 410 or 422, which it treats as final. Deliveries can arrive more than
- * once and in any order, so:
+ * 404, 410, 422 or a 3xx, which it treats as final. Every other answer (401,
+ * 403, 429, 5xx) and a timeout are retried. So answer 2xx only once you have
+ * accepted the event, and never a final status for a delivery you could not
+ * verify or handle. Deliveries can arrive more than once and in any order, so:
  *
  * - process each event id once (here, an in-memory set; in production, a
  *   table with a unique key on the event id, written in the same transaction
@@ -69,7 +71,7 @@ export function createWebhookHandler(
 
   return async ({ rawBody, signature, eventIdHeader }) => {
     if (signature === undefined || signature === '') {
-      return reply(400, false, 'Missing X-Kash-Signature header.');
+      return reply(401, false, 'Missing X-Kash-Signature header.');
     }
 
     let event: ConstructedWebhookEvent;
@@ -80,19 +82,25 @@ export function createWebhookHandler(
       event = await options.kash.webhooks.constructEvent(rawBody, signature, options.secret);
     } catch (err) {
       if (err instanceof KashWebhookSignatureError) {
-        // Not from Kash, altered on the way, or too old. 400 is final: Kash
-        // will not retry it. Never log the header or the body of a request
-        // that failed verification.
+        // Not from Kash, altered on the way, too old, or signed with a secret
+        // this server does not have (a new secret not yet deployed, or the
+        // staging and production secrets swapped). Answer 401, which Kash
+        // retries, so genuine deliveries arrive once the secret is fixed; a
+        // 400 would drop them for good. A forged request fails every retry.
+        // Never log the header or the body of a request that failed
+        // verification.
         log(`rejected a delivery: ${err.message}`);
-        return reply(400, false, 'Invalid signature.');
+        return reply(401, false, 'Invalid signature.');
       }
       if (err instanceof KashValidationError) {
         // Signed by Kash, but a known event type whose body does not match
-        // its schema. Retrying will not change it, so answer 422 (final) and
-        // keep the id: once fixed, ask Kash to resend it with
+        // this SDK version's schema, which usually means the SDK is behind
+        // the API. Answer 500 so Kash keeps retrying while you upgrade, and
+        // alert on this line; a 422 would be final and drop the event. Once
+        // fixed, an event that ran out of attempts can be resent with
         // kash.webhooks.redeliver(eventId).
-        log(`refused a malformed event (id ${eventIdHeader ?? 'unknown'}): ${err.message}`);
-        return reply(422, false, 'Malformed event.');
+        log(`could not parse a verified event (id ${eventIdHeader ?? 'unknown'}): ${err.message}`);
+        return reply(500, false, 'Event could not be parsed; please retry.');
       }
       throw err;
     }
