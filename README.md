@@ -63,12 +63,12 @@ cp .env.example .env
 
 Fill in `.env`:
 
-| Variable              | What it is                                                                               |
-| --------------------- | ---------------------------------------------------------------------------------------- |
-| `KASH_API_KEY`        | Your partner key. `kash_test_...` on staging.                                            |
-| `KASH_BASE_URL`       | `https://api-staging.kash.bot/v1` for staging, `https://api.kash.bot/v1` for production. |
-| `KASH_WEBHOOK_SECRET` | Your webhook signing secret. Only `npm run webhooks` needs it.                           |
-| `PORT`                | The port the webhook server listens on. Default 3000.                                    |
+| Variable              | What it is                                                                                                                                |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `KASH_API_KEY`        | Your partner key. `kash_test_...` on staging.                                                                                             |
+| `KASH_BASE_URL`       | Optional. Leave it unset: the SDK sends a `kash_test_` key to staging and a `kash_live_` key to production. Set it only to override that. |
+| `KASH_WEBHOOK_SECRET` | Your webhook signing secret. Only `npm run webhooks` needs it.                                                                            |
+| `PORT`                | The port the webhook server listens on. Default 3000.                                                                                     |
 
 Values already set in your shell take precedence over `.env`, so you can also inject
 them from a secrets manager. Keep keys and secrets on your server only, and never
@@ -178,7 +178,9 @@ Starts an HTTP server on `PORT` that accepts `POST /webhooks`. For each delivery
 
 1. verifies the `X-Kash-Signature` header against the raw body with the SDK's
    `webhooks.constructEvent` (an HMAC-SHA256 under your secret, at most five minutes
-   old), answering `400` if it fails;
+   old), answering `401` if it fails. Kash retries a `401`, so a wrong or
+   not-yet-deployed secret delays deliveries instead of dropping them; it treats
+   `400`, `404`, `410`, `422` and any `3xx` as final;
 2. skips an event id it has already handled, answering `200`;
 3. acknowledges with `200` an event type newer than your SDK version
    (`isUnknownWebhookEvent`), logging its id so you can have it resent with
@@ -186,7 +188,8 @@ Starts an HTTP server on `PORT` that accepts `POST /webhooks`. For each delivery
 4. handles every known type: `trade.*`, `account.*`, `withdrawal.*` and
    `payout.completed`, re-reading the current state from the API;
 5. answers `200`, or `500` if handling failed so that Kash retries. A known type
-   whose body does not match its schema gets `422`, which Kash does not retry.
+   whose body does not match this SDK version's schema also gets `500`, so Kash
+   keeps retrying while you upgrade.
 
 Kash must reach the server over HTTPS. While testing, expose it with any HTTPS tunnel,
 for example:
@@ -252,13 +255,15 @@ and 60 a minute for each account on the calls made for it. Prefer webhooks to po
 ## Moving to production
 
 1. Ask Kash to approve your organisation for production. This is a one-time review.
-2. Create a production partner key (`kash_live_...`). It must have an IP allowlist of
-   your servers, and each entry must be specific: a single address, an IPv4 range of
-   /16 or narrower, or an IPv6 range of /48 or narrower. A key without one answers
-   `403 PARTNER_KEY_REQUIRES_IP_ALLOWLIST`.
-3. Set `KASH_BASE_URL=https://api.kash.bot/v1`. Your test key does not work there.
-4. Register your production webhook URL and store its new signing secret: staging and
-   production secrets are separate.
+2. Send Kash your servers' egress addresses for the key's IP allowlist, and your
+   production webhook URL. Each allowlist entry must be specific: a single address,
+   an IPv4 range of /16 or narrower, or an IPv6 range of /48 or narrower. A live key
+   without one answers `403 PARTNER_KEY_REQUIRES_IP_ALLOWLIST`.
+3. After the review, Kash issues your production partner key (`kash_live_...`) and
+   its webhook signing secret. You cannot create a partner key yourself. Store both in
+   your secret store: staging and production secrets are separate.
+4. Leave `KASH_BASE_URL` unset, and the SDK sends a `kash_live_` key to
+   `https://api.kash.bot/v1`. Your test key does not work there.
 
 Production moves real USDC. The walkthrough refuses live keys on purpose.
 

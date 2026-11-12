@@ -42,7 +42,10 @@ export type PlaceTradeInput = {
   readonly orderId: string;
 };
 
-/** Kash's minimum trade, 1 USDC in atomic units (partner guide, section 4). */
+/**
+ * Kash's minimum trade, 1 USDC in atomic units. See
+ * https://docs.kash.bot/developer-docs/partner-integration/trading#place-a-trade
+ */
 export const MIN_TRADE_ATOMIC = 1_000_000n;
 
 export async function placeTrade(kash: KashClient, input: PlaceTradeInput): Promise<TradeResource> {
@@ -121,8 +124,10 @@ export async function placeTrade(kash: KashClient, input: PlaceTradeInput): Prom
     `Trade ${trade.id}: ${trade.status}${trade.idempotent ? ' (an earlier request with this order id)' : ''}`
   );
 
-  // 5. A high-value trade waits for the user to confirm. Your app shows the
-  //    user what they are about to do and calls kash.trades.confirm with the
+  // 5. A high-value trade waits for the user to confirm. A partner key has no
+  //    high-value step, so this never happens for partner accounts; the check
+  //    stays because the same code serves any key. Your app would show the
+  //    user what they are about to do and call kash.trades.confirm with the
   //    one-time token only if they agree; this sample stops instead.
   if (trade.confirmation !== undefined) {
     throw new StepStoppedError(

@@ -20,6 +20,8 @@ export function createReconciler(kash: KashClient): (event: WebhookEvent) => Pro
       // ---- Trades ---------------------------------------------------------
       // Trade webhooks carry no account id. Match them to your user by the
       // trade id you stored, or by your own reference in `metadata`.
+      // Never sent for a partner key, which has no high-value step; handled
+      // because the SDK's event union includes it.
       case 'trade.confirmation-required': {
         log(
           `trade ${event.data.tradeId} needs the user's confirmation by ${event.data.confirmationExpiresAt}`
